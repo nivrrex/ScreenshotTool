@@ -19,7 +19,6 @@ static RECT  g_rectSelect  = {0};
 static BOOL  g_bSelecting  = FALSE;
 static POINT g_ptStart     = {0};
 
-// ===== 截图 =====
 static BOOL CaptureRectToClipboard(const RECT& rect) {
     int w = rect.right - rect.left;
     int h = rect.bottom - rect.top;
@@ -44,7 +43,6 @@ static BOOL CaptureRectToClipboard(const RECT& rect) {
     return TRUE;
 }
 
-// ===== 遮罩窗口 =====
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE:
@@ -85,9 +83,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (g_bSelecting) {
                 ReleaseCapture();
                 g_bSelecting = FALSE;
-                // 先隐藏遮罩，等底层重绘后再截图
                 ShowWindow(hwnd, SW_HIDE);
-                Sleep(50);
+                GdiFlush();
                 DestroyWindow(hwnd);
             }
             return 0;
@@ -131,7 +128,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-// ===== 截图启动 =====
 static void StartScreenshot() {
     if (g_hwndOverlay != NULL) return;
     int sw = GetSystemMetrics(SM_CXSCREEN);
@@ -151,7 +147,6 @@ static void StartScreenshot() {
     }
 }
 
-// ===== 托盘 =====
 static void AddTrayIcon(HWND hwnd) {
     NOTIFYICONDATAA nid = {0};
     nid.cbSize = sizeof(nid);
@@ -185,7 +180,6 @@ static void ShowTrayMenu(HWND hwnd) {
     DestroyMenu(hMenu);
 }
 
-// ===== 主窗口 =====
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE:
@@ -217,7 +211,6 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-// ===== 入口 =====
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     WNDCLASSEXA wcOv = {0};
     wcOv.cbSize        = sizeof(wcOv);
