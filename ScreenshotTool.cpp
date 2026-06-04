@@ -154,7 +154,10 @@ static void AddTrayIcon(HWND hwnd) {
     nid.uID = TRAY_ICON_ID;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    nid.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(1));
+    if (!nid.hIcon) {
+        nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    }
     strncpy(nid.szTip, "Screenshot (Alt+A)", sizeof(nid.szTip) - 1);
     Shell_NotifyIconA(NIM_ADD, &nid);
 }
