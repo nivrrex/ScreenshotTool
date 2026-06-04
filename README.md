@@ -3,6 +3,7 @@ Windows下简单的快捷键截图工具，Alt+A进行截图，截图结果保�
 
 # 编译
 ```bash
-x86_64-w64-mingw32-g++ -O2 -mwindows ScreenshotTool.cpp -lgdi32 -luser32 -lshell32 -static -o ScreenshotTool.exe
+x86_64-w64-mingw32-windres resource.rc -O coff -o resource.o
+x86_64-w64-mingw32-g++ -O2 -mwindows ScreenshotTool.cpp resource.o -lgdi32 -luser32 -lshell32 -static -o ScreenshotTool.exe
 x86_64-w64-mingw32-strip --strip-unneeded ScreenshotTool.exe
 ```
