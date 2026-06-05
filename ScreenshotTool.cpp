@@ -2,14 +2,6 @@
 // x86_64-w64-mingw32-windres resource.rc -O coff -o resource.o
 // x86_64-w64-mingw32-g++ -O2 -mwindows ScreenshotTool.cpp resource.o -lgdi32 -luser32 -lshell32 -lgdiplus -lcomdlg32 -static -o ScreenshotTool.exe
 // x86_64-w64-mingw32-strip --strip-unneeded ScreenshotTool.exe
-//
-// Changelog:
-//v0.2 - 新增：单实例锁，重复启动时静默退出（命名互斥体）
-//          新增：系统托盘右键菜单增加"Export Clipboard as PNG..."
-//          新增：导出时弹出保存对话框，默认文件名 screenshot.png
-//          修复：wtypes.h 前置包含解决 MinGW 下 PROPID 未定义编译错误
-//          构建：链接参数增加 -lgdiplus -lcomdlg32
-// v0.1 - 初始版本：区域截图、Alt+A热键、系统托盘
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -55,7 +47,7 @@ static int GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
 
 static BOOL ExportClipboardToPng(HWND hwndOwner) {
     if (!IsClipboardFormatAvailable(CF_BITMAP)) {
-        MessageBoxA(hwndOwner, "剪贴板中没有图片数据。", "提示", MB_OK | MB_ICONINFORMATION);
+        MessageBoxA(hwndOwner, "No image data in clipboard.", "Info", MB_OK | MB_ICONINFORMATION);
         return FALSE;
     }
     if (!OpenClipboard(hwndOwner)) return FALSE;
@@ -67,7 +59,7 @@ static BOOL ExportClipboardToPng(HWND hwndOwner) {
 
     if (!bmp || bmp->GetLastStatus() != Ok) {
         delete bmp;
-        MessageBoxA(hwndOwner, "读取剪贴板图像失败。", "错误", MB_OK | MB_ICONERROR);
+        MessageBoxA(hwndOwner, "Failed to read clipboard image.", "Error", MB_OK | MB_ICONERROR);
         return FALSE;
     }
 
@@ -75,11 +67,11 @@ static BOOL ExportClipboardToPng(HWND hwndOwner) {
     OPENFILENAMEW ofn = {0};
     ofn.lStructSize  = sizeof(ofn);
     ofn.hwndOwner    = hwndOwner;
-    ofn.lpstrFilter  = L"PNG 图片\0*.png\0所有文件\0*.*\0";
+    ofn.lpstrFilter  = L"PNG Image\0*.png\0All Files\0*.*\0";
     ofn.lpstrFile    = szFile;
     ofn.nMaxFile     = MAX_PATH;
     ofn.lpstrDefExt  = L"png";
-    ofn.lpstrTitle   = L"导出剪贴板为 PNG";
+    ofn.lpstrTitle   = L"Export Clipboard as PNG";
     ofn.Flags        = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
 
     if (!GetSaveFileNameW(&ofn)) {
@@ -90,7 +82,7 @@ static BOOL ExportClipboardToPng(HWND hwndOwner) {
     CLSID pngClsid;
     if (GetEncoderClsid(L"image/png", &pngClsid) < 0) {
         delete bmp;
-        MessageBoxA(hwndOwner, "找不到PNG编码器。", "错误", MB_OK | MB_ICONERROR);
+        MessageBoxA(hwndOwner, "PNG encoder not found.", "Error", MB_OK | MB_ICONERROR);
         return FALSE;
     }
 
@@ -98,7 +90,7 @@ static BOOL ExportClipboardToPng(HWND hwndOwner) {
     delete bmp;
 
     if (st != Ok) {
-        MessageBoxA(hwndOwner, "保存PNG失败。", "错误", MB_OK | MB_ICONERROR);
+        MessageBoxA(hwndOwner, "Failed to save PNG.", "Error", MB_OK | MB_ICONERROR);
         return FALSE;
     }
     return TRUE;
@@ -271,7 +263,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     switch (msg) {
         case WM_CREATE:
             if (!RegisterHotKey(hwnd, 1, MOD_ALT, 'A'))
-                MessageBoxA(NULL, "Alt+A hotkey registration failed", "Warning", MB_OK);
+                MessageBoxA(NULL, "Alt+A hotkey registration failed.", "Warning", MB_OK);
             AddTrayIcon(hwnd);
             return 0;
 
@@ -316,7 +308,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wcOv.hbrBackground = (HBRUSH)GetStockObject(GRAY_BRUSH);
     wcOv.lpszClassName = OVERLAY_CLASS;
     if (!RegisterClassExA(&wcOv)) {
-        MessageBoxA(NULL, "RegisterClass overlay failed", "Error", MB_OK);
+        MessageBoxA(NULL, "RegisterClass overlay failed.", "Error", MB_OK);
         GdiplusShutdown(g_gdiplusToken);
         CloseHandle(hMutex);
         return 1;
@@ -328,7 +320,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wcMain.hInstance     = hInst;
     wcMain.lpszClassName = MAIN_CLASS;
     if (!RegisterClassExA(&wcMain)) {
-        MessageBoxA(NULL, "RegisterClass main failed", "Error", MB_OK);
+        MessageBoxA(NULL, "RegisterClass main failed.", "Error", MB_OK);
         GdiplusShutdown(g_gdiplusToken);
         CloseHandle(hMutex);
         return 1;
@@ -337,7 +329,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     HWND hwndMain = CreateWindowExA(0, MAIN_CLASS, "", WS_POPUP,
                                     0, 0, 0, 0, NULL, NULL, hInst, NULL);
     if (!hwndMain) {
-        MessageBoxA(NULL, "CreateWindow main failed", "Error", MB_OK);
+        MessageBoxA(NULL, "CreateWindow main failed.", "Error", MB_OK);
         GdiplusShutdown(g_gdiplusToken);
         CloseHandle(hMutex);
         return 1;
