@@ -1,24 +1,108 @@
 // ScreenshotTool.cpp
 // x86_64-w64-mingw32-windres resource.rc -O coff -o resource.o
-// x86_64-w64-mingw32-g++ -O2 -mwindows ScreenshotTool.cpp resource.o -lgdi32 -luser32 -lshell32 -static -o ScreenshotTool.exe
+// x86_64-w64-mingw32-g++ -O2 -mwindows ScreenshotTool.cpp resource.o -lgdi32 -luser32 -lshell32 -lgdiplus -lcomdlg32 -static -o ScreenshotTool.exe
 // x86_64-w64-mingw32-strip --strip-unneeded ScreenshotTool.exe
+//
+// Changelog:
+//v0.2 - 新增：单实例锁，重复启动时静默退出（命名互斥体）
+//          新增：系统托盘右键菜单增加"Export Clipboard as PNG..."
+//          新增：导出时弹出保存对话框，默认文件名 screenshot.png
+//          修复：wtypes.h 前置包含解决 MinGW 下 PROPID 未定义编译错误
+//          构建：链接参数增加 -lgdiplus -lcomdlg32
+// v0.1 - 初始版本：区域截图、Alt+A热键、系统托盘
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
+#include <commdlg.h>
+#include <wtypes.h>
 #include <algorithm>
+#include <gdiplus.h>
+using namespace Gdiplus;
 
 #define WM_TRAYICON   (WM_APP + 1)
 #define TRAY_ICON_ID  1001
+#define MUTEX_NAME    "ScreenshotTool_SingleInstance_Mutex"
 
 static const char OVERLAY_CLASS[] = "SC_Overlay";
 static const char MAIN_CLASS[]    = "SC_Main";
 
-static HWND  g_hwndOverlay = NULL;
-static RECT  g_rectSelect  = {0};
-static BOOL  g_bSelecting  = FALSE;
-static POINT g_ptStart     = {0};
+static HWND      g_hwndOverlay  = NULL;
+static RECT      g_rectSelect   = {0};
+static BOOL      g_bSelecting   = FALSE;
+static POINT     g_ptStart      = {0};
+static ULONG_PTR g_gdiplusToken = 0;
+
+static int GetEncoderClsid(const WCHAR* mimeType, CLSID* pClsid) {
+    UINT num = 0, size = 0;
+    GetImageEncodersSize(&num, &size);
+    if (size == 0) return -1;
+    ImageCodecInfo* pInfo = (ImageCodecInfo*)malloc(size);
+    if (!pInfo) return -1;
+    GetImageEncoders(num, size, pInfo);
+    int found = -1;
+    for (UINT i = 0; i < num; i++) {
+        if (wcscmp(pInfo[i].MimeType, mimeType) == 0) {
+            *pClsid = pInfo[i].Clsid;
+            found = (int)i;
+            break;
+        }
+    }
+    free(pInfo);
+    return found;
+}
+
+static BOOL ExportClipboardToPng(HWND hwndOwner) {
+    if (!IsClipboardFormatAvailable(CF_BITMAP)) {
+        MessageBoxA(hwndOwner, "剪贴板中没有图片数据。", "提示", MB_OK | MB_ICONINFORMATION);
+        return FALSE;
+    }
+    if (!OpenClipboard(hwndOwner)) return FALSE;
+    HBITMAP hBmp = (HBITMAP)GetClipboardData(CF_BITMAP);
+    if (!hBmp) { CloseClipboard(); return FALSE; }
+
+    Bitmap* bmp = Bitmap::FromHBITMAP(hBmp, NULL);
+    CloseClipboard();
+
+    if (!bmp || bmp->GetLastStatus() != Ok) {
+        delete bmp;
+        MessageBoxA(hwndOwner, "读取剪贴板图像失败。", "错误", MB_OK | MB_ICONERROR);
+        return FALSE;
+    }
+
+    WCHAR szFile[MAX_PATH] = L"screenshot.png";
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize  = sizeof(ofn);
+    ofn.hwndOwner    = hwndOwner;
+    ofn.lpstrFilter  = L"PNG 图片\0*.png\0所有文件\0*.*\0";
+    ofn.lpstrFile    = szFile;
+    ofn.nMaxFile     = MAX_PATH;
+    ofn.lpstrDefExt  = L"png";
+    ofn.lpstrTitle   = L"导出剪贴板为 PNG";
+    ofn.Flags        = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+
+    if (!GetSaveFileNameW(&ofn)) {
+        delete bmp;
+        return FALSE;
+    }
+
+    CLSID pngClsid;
+    if (GetEncoderClsid(L"image/png", &pngClsid) < 0) {
+        delete bmp;
+        MessageBoxA(hwndOwner, "找不到PNG编码器。", "错误", MB_OK | MB_ICONERROR);
+        return FALSE;
+    }
+
+    Status st = bmp->Save(szFile, &pngClsid, NULL);
+    delete bmp;
+
+    if (st != Ok) {
+        MessageBoxA(hwndOwner, "保存PNG失败。", "错误", MB_OK | MB_ICONERROR);
+        return FALSE;
+    }
+    return TRUE;
+}
 
 static BOOL CaptureRectToClipboard(const RECT& rect) {
     int w = rect.right - rect.left;
@@ -156,9 +240,7 @@ static void AddTrayIcon(HWND hwnd) {
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(1));
-    if (!nid.hIcon) {
-        nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-    }
+    if (!nid.hIcon) nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     strncpy(nid.szTip, "Screenshot (Alt+A)", sizeof(nid.szTip) - 1);
     Shell_NotifyIconA(NIM_ADD, &nid);
 }
@@ -174,6 +256,7 @@ static void RemoveTrayIcon(HWND hwnd) {
 static void ShowTrayMenu(HWND hwnd) {
     HMENU hMenu = CreatePopupMenu();
     AppendMenuA(hMenu, MF_STRING, 1, "Screenshot\tAlt+A");
+    AppendMenuA(hMenu, MF_STRING, 3, "Export Clipboard as PNG...");
     AppendMenuA(hMenu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(hMenu, MF_STRING, 2, "Exit");
     POINT pt;
@@ -204,6 +287,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         case WM_COMMAND:
             if (LOWORD(wParam) == 1) StartScreenshot();
             else if (LOWORD(wParam) == 2) DestroyWindow(hwnd);
+            else if (LOWORD(wParam) == 3) ExportClipboardToPng(hwnd);
             return 0;
 
         case WM_DESTROY:
@@ -216,6 +300,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 }
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
+    HANDLE hMutex = CreateMutexA(NULL, TRUE, MUTEX_NAME);
+    if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(hMutex);
+        return 0;
+    }
+
+    GdiplusStartupInput gdipInput;
+    GdiplusStartup(&g_gdiplusToken, &gdipInput, NULL);
+
     WNDCLASSEXA wcOv = {0};
     wcOv.cbSize        = sizeof(wcOv);
     wcOv.lpfnWndProc   = OverlayWndProc;
@@ -224,6 +317,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wcOv.lpszClassName = OVERLAY_CLASS;
     if (!RegisterClassExA(&wcOv)) {
         MessageBoxA(NULL, "RegisterClass overlay failed", "Error", MB_OK);
+        GdiplusShutdown(g_gdiplusToken);
+        CloseHandle(hMutex);
         return 1;
     }
 
@@ -234,6 +329,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wcMain.lpszClassName = MAIN_CLASS;
     if (!RegisterClassExA(&wcMain)) {
         MessageBoxA(NULL, "RegisterClass main failed", "Error", MB_OK);
+        GdiplusShutdown(g_gdiplusToken);
+        CloseHandle(hMutex);
         return 1;
     }
 
@@ -241,6 +338,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                                     0, 0, 0, 0, NULL, NULL, hInst, NULL);
     if (!hwndMain) {
         MessageBoxA(NULL, "CreateWindow main failed", "Error", MB_OK);
+        GdiplusShutdown(g_gdiplusToken);
+        CloseHandle(hMutex);
         return 1;
     }
     ShowWindow(hwndMain, SW_HIDE);
@@ -250,5 +349,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }
+
+    GdiplusShutdown(g_gdiplusToken);
+    CloseHandle(hMutex);
     return 0;
 }
